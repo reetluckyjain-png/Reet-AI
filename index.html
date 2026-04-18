@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Reet AI Agent</title>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial;
+      background: #0f172a;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    h2 {
+      text-align: center;
+      padding: 10px;
+    }
+
+    #chat {
+      flex: 1;
+      padding: 15px;
+      overflow-y: auto;
+    }
+
+    .msg {
+      margin: 8px 0;
+      padding: 10px;
+      border-radius: 10px;
+      max-width: 70%;
+      word-wrap: break-word;
+    }
+
+    .user {
+      background: #1e293b;
+      margin-left: auto;
+      text-align: right;
+    }
+
+    .bot {
+      background: #0b3b2e;
+      margin-right: auto;
+    }
+
+    #inputArea {
+      display: flex;
+      padding: 10px;
+      background: #111827;
+    }
+
+    input {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      outline: none;
+    }
+
+    button {
+      margin-left: 5px;
+      padding: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+<h2>Reet AI Agent 🤖</h2>
+
+<div id="chat"></div>
+
+<div id="inputArea">
+  <input id="input" placeholder="Ask Reet..." />
+  <button onclick="sendMessage()">Send</button>
+</div>
+
+<script>
+const chat = document.getElementById("chat");
+
+function add(text, cls) {
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  div.innerText = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function typing() {
+  const div = document.createElement("div");
+  div.className = "msg bot";
+  div.innerText = "Reet is thinking...";
+  chat.appendChild(div);
+  return div;
+}
+
+// 🚀 EXECUTION ENGINE
+async function sendMessage() {
+
+  const input = document.getElementById("input");
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  input.value = "";
+
+  add("You: " + msg, "user");
+
+  const loader = typing();
+
+  let data;
+
+  try {
+    const res = await fetch("http://localhost:3000/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: msg,
+        key: "reet123"
+      })
+    });
+
+    data = await res.json();
+
+  } catch {
+    loader.remove();
+    add("Reet: Server error", "bot");
+    return;
+  }
+
+  loader.remove();
+
+  if (!data) {
+    add("Reet: No response", "bot");
+    return;
+  }
+
+  // 💬 CHAT
+  if (data.type === "chat") {
+    add("Reet: " + (data.reply || "No reply"), "bot");
+    return;
+  }
+
+  // 🌐 ACTION
+  if (data.type === "action") {
+
+    if (data.action === "open_website" && data.url) {
+      window.open(data.url, "_blank");
+    }
+
+    if (data.action === "search_google" && data.query) {
+      window.open(
+        "https://google.com/search?q=" + encodeURIComponent(data.query),
+        "_blank"
+      );
+    }
+
+    add("Reet executed action", "bot");
+    return;
+  }
+
+  // 🧠 PLAN MODE
+  if (data.type === "plan" && Array.isArray(data.steps)) {
+
+    for (let step of data.steps) {
+
+      if (step.action === "open_website" && step.url) {
+        window.open(step.url, "_blank");
+      }
+
+      if (step.action === "search_google" && step.query) {
+        window.open(
+          "https://google.com/search?q=" + encodeURIComponent(step.query),
+          "_blank"
+        );
+      }
+
+      await new Promise(r => setTimeout(r, 600));
+    }
+
+    add("Reet completed your task", "bot");
+    return;
+  }
+
+  // ❗ FALLBACK
+  add("Reet: Could not process request", "bot");
+}
+</script>
+
+</body>
+</html>
