@@ -1,83 +1,63 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Reet AI Agent</title>
+<title>Reet AI</title>
 
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial;
-      background: #0f172a;
-      color: white;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-    }
+<style>
+body {
+  margin: 0;
+  font-family: Arial;
+  background: #0f172a;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
 
-    h2 {
-      text-align: center;
-      padding: 10px;
-    }
+#chat {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+}
 
-    #chat {
-      flex: 1;
-      padding: 15px;
-      overflow-y: auto;
-    }
+.msg { margin: 10px 0; }
 
-    .msg {
-      margin: 8px 0;
-      padding: 10px;
-      border-radius: 10px;
-      max-width: 70%;
-      word-wrap: break-word;
-    }
+.user { text-align: right; color: #38bdf8; }
+.bot { text-align: left; color: #22c55e; }
 
-    .user {
-      background: #1e293b;
-      margin-left: auto;
-      text-align: right;
-    }
+#inputArea {
+  display: flex;
+  padding: 10px;
+}
 
-    .bot {
-      background: #0b3b2e;
-      margin-right: auto;
-    }
+input {
+  flex: 1;
+  padding: 10px;
+}
 
-    #inputArea {
-      display: flex;
-      padding: 10px;
-      background: #111827;
-    }
-
-    input {
-      flex: 1;
-      padding: 10px;
-      border: none;
-      outline: none;
-    }
-
-    button {
-      margin-left: 5px;
-      padding: 10px;
-    }
-  </style>
+button {
+  padding: 10px;
+  margin-left: 5px;
+}
+</style>
 </head>
 
 <body>
 
-<h2>Reet AI Agent 🤖</h2>
+<h2 style="text-align:center;">Reet AI 🤖</h2>
 
 <div id="chat"></div>
 
 <div id="inputArea">
-  <input id="input" placeholder="Ask Reet..." />
-  <button onclick="sendMessage()">Send</button>
+<input id="input" placeholder="Type..." />
+<button onclick="sendMessage()">Send</button>
+<button onclick="startListening()">🎤</button>
 </div>
 
 <script>
 const chat = document.getElementById("chat");
 
+// chat UI
 function add(text, cls) {
   const div = document.createElement("div");
   div.className = "msg " + cls;
@@ -86,104 +66,79 @@ function add(text, cls) {
   chat.scrollTop = chat.scrollHeight;
 }
 
-function typing() {
-  const div = document.createElement("div");
-  div.className = "msg bot";
-  div.innerText = "Reet is thinking...";
-  chat.appendChild(div);
-  return div;
+// delay (human thinking feel)
+function delay(ms) {
+  return new Promise(res => setTimeout(res, ms));
 }
 
-// 🚀 EXECUTION ENGINE
+// ---------------- HUMAN VOICE ----------------
+function speak(text) {
+  const speech = new SpeechSynthesisUtterance(text);
+
+  const voices = window.speechSynthesis.getVoices();
+
+  speech.voice =
+    voices.find(v =>
+      v.name.includes("Google") ||
+      v.name.includes("Natural") ||
+      v.name.includes("Female")
+    ) || voices[0];
+
+  speech.rate = 1;   // slower = human
+  speech.pitch = 1.08;   // slight emotion
+  speech.volume = 1;
+
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(speech);
+}
+
+// ---------------- SEND MESSAGE ----------------
 async function sendMessage() {
-
   const input = document.getElementById("input");
-  const msg = input.value.trim();
-  if (!msg) return;
-
+  const msg = input.value;
   input.value = "";
 
   add("You: " + msg, "user");
 
-  const loader = typing();
+  add("Reet is thinking...", "bot");
+  await delay(700);
 
-  let data;
+  const res = await fetch("http://localhost:3000/chat", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ message: msg, key: "reet123" })
+  });
 
-  try {
-    const res = await fetch("http://localhost:3000/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: msg,
-        key: "reet123"
-      })
-    });
+  const data = await res.json();
 
-    data = await res.json();
-
-  } catch {
-    loader.remove();
-    add("Reet: Server error", "bot");
-    return;
-  }
-
-  loader.remove();
-
-  if (!data) {
-    add("Reet: No response", "bot");
-    return;
-  }
-
-  // 💬 CHAT
   if (data.type === "chat") {
-    add("Reet: " + (data.reply || "No reply"), "bot");
-    return;
+    add("Reet: " + data.reply, "bot");
+    speak(data.reply);
   }
 
-  // 🌐 ACTION
   if (data.type === "action") {
+    add("Reet: opening something...", "bot");
+    speak("Okay, opening it");
 
-    if (data.action === "open_website" && data.url) {
-      window.open(data.url, "_blank");
+    if (data.action === "open_website") {
+      window.open(data.payload.url, "_blank");
     }
-
-    if (data.action === "search_google" && data.query) {
-      window.open(
-        "https://google.com/search?q=" + encodeURIComponent(data.query),
-        "_blank"
-      );
-    }
-
-    add("Reet executed action", "bot");
-    return;
   }
-
-  // 🧠 PLAN MODE
-  if (data.type === "plan" && Array.isArray(data.steps)) {
-
-    for (let step of data.steps) {
-
-      if (step.action === "open_website" && step.url) {
-        window.open(step.url, "_blank");
-      }
-
-      if (step.action === "search_google" && step.query) {
-        window.open(
-          "https://google.com/search?q=" + encodeURIComponent(step.query),
-          "_blank"
-        );
-      }
-
-      await new Promise(r => setTimeout(r, 600));
-    }
-
-    add("Reet completed your task", "bot");
-    return;
-  }
-
-  // ❗ FALLBACK
-  add("Reet: Could not process request", "bot");
 }
+
+// ---------------- VOICE INPUT ----------------
+const rec = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+rec.lang = "en-US";
+
+function startListening() {
+  rec.start();
+}
+
+rec.onresult = (e) => {
+  const text = e.results[0][0].transcript;
+  document.getElementById("input").value = text;
+  sendMessage();
+};
 </script>
 
 </body>
