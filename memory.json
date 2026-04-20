@@ -1,4 +1,14 @@
-[
-  "null",
-  "{\"name\": \"lucky\"}"
-]
+{
+  "profile": {
+    "name": "Lucky",
+    "age": "",
+    "location": ""
+  },
+  "interests": [
+    "F1"
+  ],
+  "preferences": {
+    "tone": "casual"
+  },
+  "facts": []
+}

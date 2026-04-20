@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Reet AI</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: sans-serif;
+  background: #0f172a;
+  color: white;
+}
+
+#chat { padding: 20px; height: 80vh; overflow-y: auto; }
+.msg { margin: 10px; }
+.user { text-align: right; color: #38bdf8; }
+.bot { text-align: left; color: #22c55e; }
+
+#inputArea {
+  display: flex;
+  padding: 10px;
+}
+input { flex: 1; padding: 10px; }
+button { padding: 10px; }
+</style>
+</head>
+
+<body>
+
+<h2 style="text-align:center;">Reet AI 🤖</h2>
+
+<div id="chat"></div>
+
+<div id="inputArea">
+<input id="input" placeholder="Type..." />
+<button onclick="send()">Send</button>
+</div>
+
+<script>
+const chat = document.getElementById("chat");
+
+function add(text, cls) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.innerText = text;
+  chat.appendChild(d);
+}
+
+async function send() {
+  const input = document.getElementById("input");
+  const msg = input.value;
+  input.value = "";
+
+  add("You: " + msg, "user");
+
+  const res = await fetch("/chat", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ message: msg, key: "reet123" })
+  });
+
+  const data = await res.json();
+
+  // MULTI ACTION
+  if (data.type === "multi_action") {
+
+    add("⚡ Executing multiple actions...", "bot");
+
+    for (let act of data.actions) {
+
+      if (act.action === "open_website") {
+        window.open(act.payload.url, "_blank");
+      }
+
+      await new Promise(r => setTimeout(r, 800));
+    }
+
+    return;
+  }
+
+  // SINGLE ACTION
+  if (data.type === "action") {
+    window.open(data.payload.url, "_blank");
+    add("Opening...", "bot");
+    return;
+  }
+
+  // CHAT
+  add(data.reply || "Error", "bot");
+}
+</script>
+
+</body>
+</html>
