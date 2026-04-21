@@ -1,8 +1,8 @@
-const fs = require("fs");
+﻿const fs = require("fs");
+const path = require("path");
 
-const FILE = "memory.json";
+const FILE = path.join(__dirname, "memory.json");
 
-// ================= DEFAULT =================
 function getDefaultMemory() {
     return {
         profile: {
@@ -18,102 +18,83 @@ function getDefaultMemory() {
     };
 }
 
-// ================= LOAD =================
 function loadMemory() {
     try {
-        const data = JSON.parse(fs.readFileSync(FILE));
+        const data = JSON.parse(fs.readFileSync(FILE, "utf8"));
         return ensureStructure(data);
     } catch {
         return getDefaultMemory();
     }
 }
 
-// ================= SAVE =================
 function saveMemory(data) {
-    fs.writeFileSync(FILE, JSON.stringify(data, null, 2));
+    fs.writeFileSync(FILE, JSON.stringify(ensureStructure(data), null, 2), "utf8");
 }
 
-// ================= STRUCTURE SAFETY =================
 function ensureStructure(memory) {
     const def = getDefaultMemory();
+    const safeMemory = memory && typeof memory === "object" ? memory : {};
 
     return {
-        profile: memory.profile || def.profile,
-        interests: Array.isArray(memory.interests) ? memory.interests : [],
-        preferences: memory.preferences || def.preferences,
-        facts: Array.isArray(memory.facts) ? memory.facts : []
+        profile: {
+            ...def.profile,
+            ...(safeMemory.profile && typeof safeMemory.profile === "object" ? safeMemory.profile : {})
+        },
+        interests: Array.isArray(safeMemory.interests) ? safeMemory.interests : [],
+        preferences: {
+            ...def.preferences,
+            ...(safeMemory.preferences && typeof safeMemory.preferences === "object" ? safeMemory.preferences : {})
+        },
+        facts: Array.isArray(safeMemory.facts) ? safeMemory.facts : []
     };
 }
 
-// ================= FORMAT FOR AI =================
 function formatMemoryForAI(memory) {
-    return `
-User Memory:
-
-Name: ${memory.profile.name || "Unknown"}
-Age: ${memory.profile.age || "Unknown"}
-Location: ${memory.profile.location || "Unknown"}
-
-Interests:
-${memory.interests.length ? memory.interests.join(", ") : "None"}
-
-Preferences:
-${Object.entries(memory.preferences)
-    .map(([k, v]) => `${k}: ${v}`)
-    .join(", ")}
-
-Facts:
-${memory.facts.length ? memory.facts.join(", ") : "None"}
-`;
+    return `\nUser Memory:\n\nName: ${memory.profile.name || "Unknown"}\nAge: ${memory.profile.age || "Unknown"}\nLocation: ${memory.profile.location || "Unknown"}\n\nInterests:\n${memory.interests.length ? memory.interests.join(", ") : "None"}\n\nPreferences:\n${Object.entries(memory.preferences)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ")}\n\nFacts:\n${memory.facts.length ? memory.facts.join(", ") : "None"}\n`;
 }
 
-// ================= UPDATE =================
 function updateMemory(memory, extracted) {
+    const safeMemory = ensureStructure(memory);
+    if (!extracted || !extracted.save) return safeMemory;
 
-    if (!extracted || !extracted.save) return memory;
+    const type = typeof extracted.type === "string" ? extracted.type.toLowerCase() : "";
+    const value = typeof extracted.value === "string" ? extracted.value.trim() : "";
+    const key = typeof extracted.key === "string" ? extracted.key.toLowerCase() : "";
 
-    const type = extracted.type?.toLowerCase();
-    const value = extracted.value?.trim();
-    const key = extracted.key?.toLowerCase();
+    if (!value || value.length < 2) return safeMemory;
 
-    if (!value || value.length < 2) return memory;
+    if (type === "profile" && key && Object.prototype.hasOwnProperty.call(safeMemory.profile, key)) {
+        safeMemory.profile[key] = value;
+    } else if (type === "interest") {
+        const values = value
+            .split(/,|\band\b/i)
+            .map((v) => v.trim())
+            .filter(Boolean);
 
-    // PROFILE
-    if (type === "profile" && key) {
-        memory.profile[key] = value;
-    }
-
-    // INTEREST
-    else if (type === "interest") {
-
-        // split multi values (🔥 upgrade)
-        const values = value.split(/,|and/).map(v => v.trim());
-
-        values.forEach(v => {
-            if (!memory.interests.some(i => i.toLowerCase() === v.toLowerCase())) {
-                memory.interests.push(v);
+        for (const entry of values) {
+            if (!safeMemory.interests.some((i) => i.toLowerCase() === entry.toLowerCase())) {
+                safeMemory.interests.push(entry);
             }
-        });
-    }
-
-    // PREFERENCE
-    else if (type === "preference" && key) {
-        memory.preferences[key] = value;
-    }
-
-    // FACT
-    else if (type === "fact") {
-        if (!memory.facts.some(f => f.toLowerCase() === value.toLowerCase())) {
-            memory.facts.push(value);
         }
 
-        // limit size
-        if (memory.facts.length > 50) {
-            memory.facts.shift();
+        if (safeMemory.interests.length > 50) {
+            safeMemory.interests = safeMemory.interests.slice(-50);
+        }
+    } else if (type === "preference" && key) {
+        safeMemory.preferences[key] = value;
+    } else if (type === "fact") {
+        if (!safeMemory.facts.some((f) => f.toLowerCase() === value.toLowerCase())) {
+            safeMemory.facts.push(value);
+        }
+
+        if (safeMemory.facts.length > 50) {
+            safeMemory.facts.shift();
         }
     }
 
-    return memory;
+    return safeMemory;
 }
 
 module.exports = {

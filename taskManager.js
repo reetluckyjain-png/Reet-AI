@@ -1,28 +1,39 @@
-const fs = require("fs");
+﻿const fs = require("fs");
+const path = require("path");
 
-const FILE = "tasks.json";
+const FILE = path.join(__dirname, "tasks.json");
 
-// LOAD TASKS
 function loadTasks() {
     try {
-        return JSON.parse(fs.readFileSync(FILE));
+        const data = JSON.parse(fs.readFileSync(FILE, "utf8"));
+        return Array.isArray(data) ? data : [];
     } catch {
         return [];
     }
 }
 
-// SAVE TASKS
 function saveTasks(tasks) {
-    fs.writeFileSync(FILE, JSON.stringify(tasks, null, 2));
+    fs.writeFileSync(FILE, JSON.stringify(tasks, null, 2), "utf8");
 }
 
-// ADD TASK
+function normalizeTaskText(text) {
+    return typeof text === "string" ? text.trim() : "";
+}
+
+function normalizeTaskId(id) {
+    if (id === null || id === undefined) return "";
+    return String(id).trim();
+}
+
 function addTask(text) {
+    const cleanText = normalizeTaskText(text);
+    if (!cleanText) return null;
+
     const tasks = loadTasks();
 
     const newTask = {
         id: Date.now(),
-        text,
+        text: cleanText,
         completed: false,
         createdAt: new Date().toISOString()
     };
@@ -33,27 +44,36 @@ function addTask(text) {
     return newTask;
 }
 
-// GET ALL TASKS
 function getTasks() {
     return loadTasks();
 }
 
-// COMPLETE TASK
 function completeTask(id) {
+    const normalizedId = normalizeTaskId(id);
+    if (!normalizedId) return null;
+
     const tasks = loadTasks();
+    const task = tasks.find((t) => String(t.id) === normalizedId);
+    if (!task) return null;
 
-    const task = tasks.find(t => t.id == id);
-    if (task) task.completed = true;
-
+    task.completed = true;
     saveTasks(tasks);
     return task;
 }
 
-// DELETE TASK
 function deleteTask(id) {
-    let tasks = loadTasks();
-    tasks = tasks.filter(t => t.id != id);
-    saveTasks(tasks);
+    const normalizedId = normalizeTaskId(id);
+    if (!normalizedId) return false;
+
+    const tasks = loadTasks();
+    const filtered = tasks.filter((t) => String(t.id) !== normalizedId);
+
+    if (filtered.length === tasks.length) {
+        return false;
+    }
+
+    saveTasks(filtered);
+    return true;
 }
 
 module.exports = {

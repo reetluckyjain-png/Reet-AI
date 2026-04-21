@@ -1,14 +1,17 @@
 {
   "profile": {
-    "name": "Lucky",
+    "name": "",
     "age": "",
     "location": ""
   },
   "interests": [
-    "F1"
+    ""
   ],
   "preferences": {
     "tone": "casual"
   },
-  "facts": []
+  "facts": [
+    "",
+    "Formula One (F1) is a single-seater, open-wheeled auto racing category that was established in 1950."
+  ]
 }
