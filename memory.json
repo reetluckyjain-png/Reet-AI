@@ -5,10 +5,15 @@
     "location": ""
   },
   "interests": [
-    ""
+    "",
+    "Red Bull",
+    "ronaldo",
+    "india"
   ],
   "preferences": {
-    "tone": "casual"
+    "tone": "casual",
+    "favorite_team": "India",
+    "favorite_f1_team": "redbull"
   },
   "facts": [
     "",

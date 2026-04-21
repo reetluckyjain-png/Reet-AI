@@ -5,6 +5,9 @@ AI assistant app with:
 - Structured memory (`memory.json`)
 - Task management (`tasks.json`)
 - Action intents (`open`, `search`, smart open+search chain)
+- Memory-aware action enrichment (favorite team/player context)
+- Ambiguity clarification (`Do you mean India or Messi?`)
+- Session-based conversation context
 
 ## Setup
 

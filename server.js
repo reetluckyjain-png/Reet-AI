@@ -19,13 +19,22 @@ const {
     deleteTask
 } = require("./taskManager");
 
+const {
+    buildSearchUrl,
+    detectAmbiguity,
+    detectPlatformHint,
+    enrichActionQuery,
+    parseSmartChain,
+    resolveWebsite
+} = require("./actionIntelligence");
+
 const app = express();
 app.use(express.json());
 app.use(cors());
 app.use(express.static("public"));
 
 const PORT = process.env.PORT || 3000;
-const MAX_HISTORY = 12;
+const MAX_HISTORY = 14;
 const INTENTS = new Set([
     "open",
     "search",
@@ -42,6 +51,7 @@ const groq = hasGroqKey
     : null;
 
 const sessionHistory = new Map();
+const pendingClarifications = new Map();
 
 function checkAuth(req, res, next) {
     const secretKey = (process.env.SECRET_KEY || "").trim();
@@ -81,35 +91,12 @@ function getHistoryForSession(sessionId) {
     return sessionHistory.get(sessionId);
 }
 
-const SITE_MAP = {
-    youtube: "https://www.youtube.com",
-    yt: "https://www.youtube.com",
-    google: "https://www.google.com",
-    gmail: "https://mail.google.com",
-    instagram: "https://www.instagram.com",
-    insta: "https://www.instagram.com",
-    facebook: "https://www.facebook.com",
-    fb: "https://www.facebook.com",
-    twitter: "https://twitter.com",
-    x: "https://twitter.com",
-    github: "https://github.com",
-    linkedin: "https://www.linkedin.com",
-    whatsapp: "https://web.whatsapp.com",
-    chatgpt: "https://chat.openai.com"
-};
-
-function resolveWebsite(input) {
-    if (!input) return null;
-
-    let clean = String(input).toLowerCase().trim();
-    clean = clean.replace(/(please|can you|open|go to|for me)/g, "").trim();
-    clean = clean.replace(/\s+/g, "");
-
-    if (SITE_MAP[clean]) return SITE_MAP[clean];
-    if (clean.startsWith("http://") || clean.startsWith("https://")) return clean;
-    if (clean.includes(".")) return `https://${clean}`;
-
-    return `https://${clean}.com`;
+function pushSessionMessage(sessionId, role, content) {
+    const history = getHistoryForSession(sessionId);
+    history.push({ role, content: String(content || "") });
+    while (history.length > MAX_HISTORY) {
+        history.shift();
+    }
 }
 
 function parseJsonFromModel(rawText) {
@@ -130,17 +117,56 @@ function parseJsonFromModel(rawText) {
     }
 }
 
-async function extractMemory(message) {
+function extractMemoryFromRules(message) {
     if (/my name is (.+)/i.test(message)) {
         return { save: true, type: "profile", key: "name", value: message.match(/my name is (.+)/i)[1] };
     }
 
-    if (/i like (.+)/i.test(message)) {
-        return { save: true, type: "interest", value: message.match(/i like (.+)/i)[1] };
+    if (/my favou?rite\s+([a-z0-9\s]+?)\s+(team|player|club)\s+is\s+(.+)/i.test(message)) {
+        const match = message.match(/my favou?rite\s+([a-z0-9\s]+?)\s+(team|player|club)\s+is\s+(.+)/i);
+        const qualifier = match[1].trim().replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").toLowerCase();
+        const subject = match[2].toLowerCase();
+        return {
+            save: true,
+            type: "preference",
+            key: `favorite_${qualifier}_${subject}`,
+            value: match[3].trim()
+        };
+    }
+
+    if (/my favou?rite (team|player|club) is (.+)/i.test(message)) {
+        const match = message.match(/my favou?rite (team|player|club) is (.+)/i);
+        return {
+            save: true,
+            type: "preference",
+            key: `favorite_${match[1].toLowerCase()}`,
+            value: match[2].trim()
+        };
+    }
+
+    if (/i(?:\s+also)?\s+like\s+(.+)/i.test(message)) {
+        return { save: true, type: "interest", value: message.match(/i(?:\s+also)?\s+like\s+(.+)/i)[1] };
+    }
+
+    if (/i\s+love\s+(.+)/i.test(message)) {
+        return { save: true, type: "interest", value: message.match(/i\s+love\s+(.+)/i)[1] };
+    }
+
+    if (/i support (.+)/i.test(message)) {
+        return { save: true, type: "preference", key: "favorite_team", value: message.match(/i support (.+)/i)[1] };
     }
 
     if (/i am (.+)/i.test(message)) {
         return { save: true, type: "fact", value: message.match(/i am (.+)/i)[1] };
+    }
+
+    return { save: false };
+}
+
+async function extractMemory(message) {
+    const fromRules = extractMemoryFromRules(message);
+    if (fromRules.save) {
+        return fromRules;
     }
 
     if (!groq) {
@@ -174,7 +200,7 @@ function detectIntentFast(message) {
         return { intent: "get_tasks", input: "" };
     }
 
-    const addMatch = message.match(/(?:add|create)\s+(?:a\s+)?task\s+(.+)/i);
+    const addMatch = message.match(/(?:add|create|remember)\s+(?:a\s+)?task\s+(.+)/i);
     if (addMatch?.[1]) {
         return { intent: "add_task", input: addMatch[1].trim() };
     }
@@ -189,14 +215,24 @@ function detectIntentFast(message) {
         return { intent: "delete_task", input: deleteMatch[1].trim() };
     }
 
+    const chainMatch = parseSmartChain(message);
+    if (chainMatch) {
+        return { intent: "search", input: chainMatch.query };
+    }
+
     const openMatch = message.match(/^\s*open\s+(.+)/i);
     if (openMatch?.[1]) {
         return { intent: "open", input: openMatch[1].trim() };
     }
 
-    const searchMatch = message.match(/(?:^|\s)(?:search|find)\s+(.+)/i);
+    const searchMatch = message.match(/(?:^|\s)(?:search|find|look up)\s+(.+)/i);
     if (searchMatch?.[1]) {
         return { intent: "search", input: searchMatch[1].trim() };
+    }
+
+    const naturalSearchPattern = /(show me|something cool|highlights|latest|updates|news|what's new|whats new|tell me about)/i;
+    if (naturalSearchPattern.test(message)) {
+        return { intent: "search", input: message };
     }
 
     return { intent: "chat", input: "" };
@@ -204,7 +240,6 @@ function detectIntentFast(message) {
 
 async function detectIntent(message) {
     const fast = detectIntentFast(message);
-    if (fast.intent !== "chat") return fast;
     if (!groq) return fast;
 
     try {
@@ -212,7 +247,7 @@ async function detectIntent(message) {
             messages: [
                 {
                     role: "system",
-                    content: `Return strict JSON only:\n{"intent":"open|search|add_task|get_tasks|complete_task|delete_task|chat","input":""}`
+                    content: `Return strict JSON only:\n{"intent":"open|search|add_task|get_tasks|complete_task|delete_task|chat","input":""}\nClassify natural requests like \"show me something cool about cricket\" as search.`
                 },
                 { role: "user", content: message }
             ],
@@ -225,25 +260,22 @@ async function detectIntent(message) {
 
         return {
             intent: parsed.intent,
-            input: typeof parsed.input === "string" ? parsed.input : ""
+            input: typeof parsed.input === "string" && parsed.input.trim()
+                ? parsed.input.trim()
+                : fast.input
         };
     } catch {
         return fast;
     }
 }
 
-async function getAIResponse(message, sessionId) {
+async function getAIResponse(sessionId) {
     const memory = formatMemoryForAI(loadMemory());
     const history = getHistoryForSession(sessionId);
 
-    history.push({ role: "user", content: message });
-    while (history.length > MAX_HISTORY) {
-        history.shift();
-    }
-
     if (!groq) {
         const fallback = "Groq API key missing. I can still handle tasks, open, and search commands.";
-        history.push({ role: "assistant", content: fallback });
+        pushSessionMessage(sessionId, "assistant", fallback);
         return fallback;
     }
 
@@ -251,7 +283,12 @@ async function getAIResponse(message, sessionId) {
         messages: [
             {
                 role: "system",
-                content: `Reply strict JSON only: {"message":"..."}\n${memory}`
+                content: `You are Reet, the user's personal AI friend: warm, sharp, concise, and practical.
+Keep replies natural and helpful. Be encouraging without hype.
+Use memory and recent chat context to personalize responses.
+If uncertain, ask a brief clarifying question.
+Never claim external actions were completed unless the app actually executes them.
+Reply strict JSON only: {"message":"..."}\n${memory}`
             },
             ...history
         ],
@@ -264,12 +301,55 @@ async function getAIResponse(message, sessionId) {
         ? parsed.message
         : String(raw || "");
 
-    history.push({ role: "assistant", content: reply });
-    while (history.length > MAX_HISTORY) {
-        history.shift();
+    pushSessionMessage(sessionId, "assistant", reply);
+    return reply;
+}
+
+function buildScopedQuery(baseQuery, choice) {
+    if (/highlight/i.test(baseQuery)) {
+        return `${baseQuery} of ${choice}`;
+    }
+    return `${baseQuery} about ${choice}`;
+}
+
+function buildSmartActionResponse({ message, sessionId, explicitQuery, explicitPlatform, skipAmbiguity = false }) {
+    const memory = loadMemory();
+    const history = getHistoryForSession(sessionId);
+
+    const chain = parseSmartChain(message);
+    const platform = explicitPlatform || chain?.platform || detectPlatformHint(message, history);
+    const rawQuery = explicitQuery || chain?.query || message;
+    if (!skipAmbiguity) {
+        const ambiguity = detectAmbiguity({
+            rawQuery,
+            memory,
+            history
+        });
+        if (ambiguity) {
+            pendingClarifications.set(sessionId, {
+                platform,
+                cleanedQuery: ambiguity.cleanedQuery,
+                candidates: ambiguity.candidates
+            });
+            pushSessionMessage(sessionId, "assistant", ambiguity.prompt);
+            return { type: "chat", reply: ambiguity.prompt };
+        }
     }
 
-    return reply;
+    const enrichedQuery = enrichActionQuery({
+        rawQuery,
+        memory,
+        history
+    });
+
+    const url = buildSearchUrl(platform, enrichedQuery);
+    pushSessionMessage(sessionId, "assistant", `Action: search ${enrichedQuery} on ${platform}`);
+
+    return {
+        type: "action",
+        action: "open_website",
+        payload: { url, query: enrichedQuery, platform }
+    };
 }
 
 app.post("/chat", checkAuth, async (req, res) => {
@@ -279,27 +359,64 @@ app.post("/chat", checkAuth, async (req, res) => {
             return res.status(400).json({ error: "message is required" });
         }
 
-        const lower = message.toLowerCase();
         const sessionId = getSessionId(req);
+        pushSessionMessage(sessionId, "user", message);
 
-        if (lower.includes("open") && lower.includes("search")) {
-            const openMatch = lower.match(/open\s+([a-z0-9.-]+)/);
-            const searchMatch = message.match(/search\s+(.+)/i);
-
-            const site = openMatch ? openMatch[1] : null;
-            const query = searchMatch ? searchMatch[1] : null;
-
-            if (site && query) {
-                const url = (site === "youtube" || site === "yt")
-                    ? "https://www.youtube.com/results?search_query=" + encodeURIComponent(query)
-                    : "https://www.google.com/search?q=" + encodeURIComponent(query);
-
-                return res.json({
-                    type: "action",
-                    action: "open_website",
-                    payload: { url }
-                });
+        const pending = pendingClarifications.get(sessionId);
+        if (pending) {
+            const lower = message.toLowerCase();
+            if (/\b(cancel|never mind|nevermind|stop)\b/i.test(lower)) {
+                pendingClarifications.delete(sessionId);
+                const reply = "Okay, I cancelled that search.";
+                pushSessionMessage(sessionId, "assistant", reply);
+                return res.json({ type: "chat", reply });
             }
+
+            const match = pending.candidates.find((candidate) => {
+                const c = candidate.toLowerCase();
+                return lower === c || lower.includes(c);
+            });
+
+            if (match) {
+                pendingClarifications.delete(sessionId);
+                const scopedQuery = buildScopedQuery(pending.cleanedQuery, match);
+                return res.json(buildSmartActionResponse({
+                    message,
+                    sessionId,
+                    explicitQuery: scopedQuery,
+                    explicitPlatform: pending.platform,
+                    skipAmbiguity: true
+                }));
+            }
+
+            if (message.split(/\s+/).length <= 5) {
+                const reply = `Please pick one: ${pending.candidates.join(" or ")}.`;
+                pushSessionMessage(sessionId, "assistant", reply);
+                return res.json({ type: "chat", reply });
+            }
+        }
+
+        const memoryFromRules = extractMemoryFromRules(message);
+        if (memoryFromRules.save) {
+            const updatedMemory = updateMemory(loadMemory(), memoryFromRules);
+            saveMemory(updatedMemory);
+            pendingClarifications.delete(sessionId);
+
+            const reply = memoryFromRules.key
+                ? `Got it. I will remember your ${memoryFromRules.key.replace(/_/g, " ")} as ${memoryFromRules.value}.`
+                : `Got it. I will remember: ${memoryFromRules.value}.`;
+            pushSessionMessage(sessionId, "assistant", reply);
+            return res.json({ type: "chat", reply });
+        }
+
+        const chain = parseSmartChain(message);
+        if (chain) {
+            return res.json(buildSmartActionResponse({
+                message,
+                sessionId,
+                explicitQuery: chain.query,
+                explicitPlatform: chain.platform
+            }));
         }
 
         const intent = await detectIntent(message);
@@ -307,43 +424,58 @@ app.post("/chat", checkAuth, async (req, res) => {
         if (intent.intent === "add_task") {
             const task = addTask(intent.input);
             if (!task) return res.json({ type: "chat", reply: "Please provide task text." });
-            return res.json({ type: "chat", reply: `Task added: ${task.id} ${task.text}` });
+            const reply = `Task added: ${task.id} ${task.text}`;
+            pushSessionMessage(sessionId, "assistant", reply);
+            return res.json({ type: "chat", reply });
         }
 
         if (intent.intent === "get_tasks") {
             const tasks = getTasks();
-            if (!tasks.length) return res.json({ type: "chat", reply: "No tasks." });
-            return res.json({
-                type: "chat",
-                reply: tasks.map((t) => `${t.completed ? "[x]" : "[ ]"} ${t.id} ${t.text}`).join("\n")
-            });
+            const reply = tasks.length
+                ? tasks.map((t) => `${t.completed ? "[x]" : "[ ]"} ${t.id} ${t.text}`).join("\n")
+                : "No tasks.";
+            pushSessionMessage(sessionId, "assistant", reply);
+            return res.json({ type: "chat", reply });
         }
 
         if (intent.intent === "complete_task") {
             const task = completeTask(intent.input);
-            return res.json({ type: "chat", reply: task ? `Completed: ${task.text}` : "Task not found." });
+            const reply = task ? `Completed: ${task.text}` : "Task not found.";
+            pushSessionMessage(sessionId, "assistant", reply);
+            return res.json({ type: "chat", reply });
         }
 
         if (intent.intent === "delete_task") {
             const deleted = deleteTask(intent.input);
-            return res.json({ type: "chat", reply: deleted ? "Task deleted." : "Task not found." });
-        }
-
-        if (intent.intent === "open") {
-            return res.json({
-                type: "action",
-                action: "open_website",
-                payload: { url: resolveWebsite(intent.input || message) }
-            });
+            const reply = deleted ? "Task deleted." : "Task not found.";
+            pushSessionMessage(sessionId, "assistant", reply);
+            return res.json({ type: "chat", reply });
         }
 
         if (intent.intent === "search") {
+            return res.json(buildSmartActionResponse({
+                message,
+                sessionId,
+                explicitQuery: intent.input || message
+            }));
+        }
+
+        if (intent.intent === "open") {
+            const looksLikeSearch = /\b(search|find|look up|highlights|news|updates|something cool)\b/i.test(intent.input || message);
+            if (looksLikeSearch) {
+                return res.json(buildSmartActionResponse({
+                    message,
+                    sessionId,
+                    explicitQuery: intent.input || message
+                }));
+            }
+
+            const url = resolveWebsite(intent.input || message);
+            pushSessionMessage(sessionId, "assistant", `Action: open ${url}`);
             return res.json({
                 type: "action",
                 action: "open_website",
-                payload: {
-                    url: "https://www.google.com/search?q=" + encodeURIComponent(intent.input || message)
-                }
+                payload: { url }
             });
         }
 
@@ -351,7 +483,7 @@ app.post("/chat", checkAuth, async (req, res) => {
         const updatedMemory = updateMemory(loadMemory(), mem);
         saveMemory(updatedMemory);
 
-        const reply = await getAIResponse(message, sessionId);
+        const reply = await getAIResponse(sessionId);
         return res.json({ type: "chat", reply });
     } catch (error) {
         const requestId = crypto.randomUUID();
